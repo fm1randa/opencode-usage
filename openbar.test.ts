@@ -4,19 +4,15 @@ import {
   buildCachePath,
   normalizeCodexPayload,
   normalizeCopilotPayload,
-  normalizeZaiPayload,
   formatRelativeTime,
   readOpenCodeAuthText,
   readCacheText,
   resolveCodexCredential,
   resolveCopilotCredential,
-  resolveProviderFromMessageHistory,
-  resolveZaiCredential,
   resolveProviderForSession,
   resolveProviderFromModelString,
   resolveProviderFromMessages,
   resolveSessionRoot,
-  resolveZaiUsageURL,
 } from "./shared"
 
 describe("resolveProviderFromMessages", () => {
@@ -45,22 +41,11 @@ describe("resolveProviderFromMessages", () => {
 })
 
 describe("resolveProviderForSession", () => {
-  test("prefers selected model over persisted session provider", () => {
+  test("prefers persisted session provider over config and message history", () => {
     const result = resolveProviderForSession(
       "session-1",
       [{ role: "assistant", providerID: "openai" }],
-      "zai/glm-5.1",
-      { "session-1": "github-copilot" },
-    )
-
-    expect(result).toEqual({ provider: "zai", source: "selected_model" })
-  })
-
-  test("falls back to persisted session provider when selected model is missing", () => {
-    const result = resolveProviderForSession(
-      "session-1",
-      [{ role: "assistant", providerID: "openai" }],
-      undefined,
+      "openai/gpt-5.3-codex",
       { "session-1": "github-copilot" },
     )
 
@@ -79,24 +64,10 @@ describe("resolveProviderForSession", () => {
   })
 })
 
-describe("resolveProviderFromMessageHistory", () => {
-  test("prefers latest user-selected model before assistant provider", () => {
-    const result = resolveProviderFromMessageHistory([
-      { role: "assistant", providerID: "github-copilot" },
-      { role: "user", model: { providerID: "z.ai", modelID: "glm-5.1" } },
-    ])
-
-    expect(result).toEqual({ provider: "zai", source: "selected_model" })
-  })
-})
-
 describe("resolveProviderFromModelString", () => {
   test("extracts provider from provider/model config", () => {
     expect(resolveProviderFromModelString("github-copilot/gpt-5.4")).toBe("github-copilot")
     expect(resolveProviderFromModelString("openai/gpt-5.3-codex")).toBe("openai")
-    expect(resolveProviderFromModelString("zai/glm-4.5")).toBe("zai")
-    expect(resolveProviderFromModelString("z.ai/glm-4.5")).toBe("zai")
-    expect(resolveProviderFromModelString("zai-coding-plan/glm-5-turbo")).toBe("zai")
   })
 
   test("returns undefined for unknown or malformed values", () => {
@@ -203,100 +174,6 @@ describe("normalizeCopilotPayload", () => {
         used: 800,
       },
     ])
-  })
-})
-
-describe("normalizeZaiPayload", () => {
-  test("normalizes tokens and MCP rows", () => {
-    const result = normalizeZaiPayload({
-      code: 200,
-      msg: "Operation successful",
-      success: true,
-      data: {
-        planName: "Pro",
-        limits: [
-          {
-            type: "TIME_LIMIT",
-            usage: 100,
-            currentValue: 0,
-            remaining: 100,
-            percentage: 0,
-          },
-          {
-            type: "TOKENS_LIMIT",
-            usage: 40000000,
-            currentValue: 13628365,
-            remaining: 26371635,
-            percentage: 34,
-            nextResetTime: 1768507567547,
-          },
-        ],
-      },
-    })
-
-    expect(result.message).toBe("Plan: Pro")
-    expect(result.windows).toEqual([
-      {
-        label: "TOKENS",
-        limit: 40000000,
-        remaining: 26371635,
-        resetsAt: "2026-01-15T20:06:07.547Z",
-        unit: "tokens",
-        used: 13628365,
-      },
-      {
-        label: "MCP",
-        limit: 100,
-        remaining: 100,
-        resetsAt: undefined,
-        unit: undefined,
-        used: 0,
-      },
-    ])
-  })
-
-  test("keeps percent rows when z.ai omits counts", () => {
-    const result = normalizeZaiPayload({
-      code: 200,
-      msg: "Operation successful",
-      success: true,
-      data: {
-        limits: [
-          {
-            type: "TOKENS_LIMIT",
-            percentage: 1,
-            nextResetTime: 1770724088678,
-          },
-        ],
-      },
-    })
-
-    expect(result.windows).toEqual([
-      {
-        label: "TOKENS",
-        resetsAt: "2026-02-10T11:48:08.678Z",
-        unit: "tokens",
-        usedPercent: 1,
-      },
-    ])
-  })
-
-  test("throws on non-success payloads", () => {
-    expect(() =>
-      normalizeZaiPayload({
-        code: 1001,
-        msg: "Authorization Token Missing",
-        success: false,
-      })).toThrow("Authorization Token Missing")
-  })
-
-  test("throws when success payload has no data object", () => {
-    expect(() =>
-      normalizeZaiPayload({
-        code: 200,
-        msg: "Operation successful",
-        success: true,
-      })).toThrow("Operation successful")
   })
 })
 
@@ -437,69 +314,6 @@ describe("OpenCode auth integration", () => {
     })
   })
 
-  test("prefers OPENBAR z.ai env var over OpenCode auth", () => {
-    const result = resolveZaiCredential(
-      {
-        OPENBAR_ZAI_API_KEY: "env-token",
-      },
-      {
-        zai: {
-          type: "api",
-          key: "auth-token",
-        },
-      },
-    )
-
-    expect(result).toEqual({
-      apiKey: "env-token",
-      source: "env",
-    })
-  })
-
-  test("falls back to OpenCode auth for z.ai", () => {
-    const result = resolveZaiCredential(
-      {},
-      {
-        "z.ai": {
-          type: "api",
-          key: "auth-token",
-        },
-      },
-    )
-
-    expect(result).toEqual({
-      apiKey: "auth-token",
-      source: "opencode",
-    })
-  })
-
-  test("falls back to OpenCode auth for zai-coding-plan", () => {
-    const result = resolveZaiCredential(
-      {},
-      {
-        "zai-coding-plan": {
-          type: "api",
-          key: "auth-token",
-        },
-      },
-    )
-
-    expect(result).toEqual({
-      apiKey: "auth-token",
-      source: "opencode",
-    })
-  })
-
-  test("resolves z.ai endpoint overrides", () => {
-    expect(resolveZaiUsageURL({})).toBe("https://api.z.ai/api/monitor/usage/quota/limit")
-    expect(resolveZaiUsageURL({ OPENBAR_ZAI_API_HOST: "open.bigmodel.cn" })).toBe(
-      "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
-    )
-    expect(resolveZaiUsageURL({ OPENBAR_ZAI_QUOTA_URL: "https://open.bigmodel.cn/api/coding/paas/v4" })).toBe(
-      "https://open.bigmodel.cn/api/coding/paas/v4",
-    )
-  })
-
   test("builds the same default OpenCode auth path shape", () => {
     expect(buildOpenCodeAuthPath("/Users/filipe", {})).toBe("/Users/filipe/.local/share/opencode/auth.json")
     expect(buildOpenCodeAuthPath("/Users/filipe", { XDG_DATA_HOME: "/tmp/data-home" })).toBe(
@@ -511,23 +325,13 @@ describe("OpenCode auth integration", () => {
     const cache = readCacheText(`{
       "version": 1,
       "updatedAt": "2026-04-01T00:00:00.000Z",
-      "providers": {
-        "zai": {
-          "provider": "zai",
-          "source": "live",
-          "status": "ok",
-          "fetchedAt": "2026-04-01T00:00:00.000Z",
-          "windows": []
-        }
-      },
+      "providers": {},
       "sessionProviders": {
-        "z1": "z.ai",
         "abc": "github-copilot",
         "bad": "unknown-provider"
       }
     }`)
 
-    expect(cache.providers.zai?.provider).toBe("zai")
-    expect(cache.sessionProviders).toEqual({ z1: "zai", abc: "github-copilot" })
+    expect(cache.sessionProviders).toEqual({ abc: "github-copilot" })
   })
 })
