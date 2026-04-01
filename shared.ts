@@ -4,8 +4,9 @@ import path from "node:path"
 
 export const OPENBAR_ID = "openbar"
 export const REFRESH_INTERVAL_MS = 5 * 60 * 1000
+const ZAI_QUOTA_PATH = "api/monitor/usage/quota/limit"
 
-export type SupportedProvider = "openai" | "github-copilot"
+export type SupportedProvider = "openai" | "github-copilot" | "zai"
 export type ProviderStatus = "ok" | "stale" | "missing_auth" | "error" | "unavailable"
 export type ProviderResolutionSource = "selected_model" | "session_assistant" | "unavailable"
 export type UsageUnit = "requests" | "interactions" | "credits" | "tokens"
@@ -67,6 +68,11 @@ export type CodexCredential = {
 
 export type CopilotCredential = {
   token?: string
+  source: "env" | "opencode" | "missing"
+}
+
+export type ZaiCredential = {
+  apiKey?: string
   source: "env" | "opencode" | "missing"
 }
 
@@ -200,6 +206,7 @@ export const normalizeProviderID = (value: unknown): SupportedProvider | undefin
   if (!id) return
   if (id === "openai" || id.startsWith("openai")) return "openai"
   if (id.includes("github-copilot")) return "github-copilot"
+  if (id === "zai" || id === "z.ai" || id.startsWith("zai-") || id.startsWith("z.ai-")) return "zai"
 }
 
 export const resolveProviderFromModelString = (value: unknown): SupportedProvider | undefined => {
@@ -212,7 +219,27 @@ export const resolveProviderFromModelString = (value: unknown): SupportedProvide
 export const providerLabel = (provider?: SupportedProvider) => {
   if (provider === "openai") return "Codex"
   if (provider === "github-copilot") return "GitHub Copilot"
+  if (provider === "zai") return "z.ai"
   return "OpenBar"
+}
+
+const buildURLFromOverride = (value: string) => {
+  const text = value.includes("://") ? value : `https://${value}`
+  const url = new URL(text)
+  if (!url.pathname || url.pathname === "/") {
+    url.pathname = `/${ZAI_QUOTA_PATH}`
+  }
+  return url.toString()
+}
+
+export const resolveZaiUsageURL = (env: EnvInput = process.env) => {
+  const quotaURL = asString(env.OPENBAR_ZAI_QUOTA_URL)
+  if (quotaURL) return buildURLFromOverride(quotaURL)
+
+  const apiHost = asString(env.OPENBAR_ZAI_API_HOST)
+  if (apiHost) return buildURLFromOverride(apiHost)
+
+  return `https://api.z.ai/${ZAI_QUOTA_PATH}`
 }
 
 export const buildCachePath = (root: string) => {
@@ -245,6 +272,11 @@ export const resolveProviderFromMessages = (
     return { provider: selectedProvider, source: "selected_model" }
   }
 
+  return resolveProviderFromMessageHistory(messages)
+}
+
+export const resolveProviderFromMessageHistory = (messages: unknown[]): ResolvedProvider => {
+  
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const record = toRecord(messages[index])
     if (!record || record.role !== "user") continue
@@ -295,6 +327,7 @@ export const readCacheText = (text: string): OpenBarCache => {
     providers: {
       openai: toRecord(providers?.openai) as ProviderUsage | undefined,
       "github-copilot": toRecord(providers?.["github-copilot"]) as ProviderUsage | undefined,
+      zai: toRecord(providers?.zai) as ProviderUsage | undefined,
     },
     sessionProviders: normalizedSessionProviders,
   }
@@ -306,12 +339,17 @@ export const resolveProviderForSession = (
   selectedModel?: string,
   sessionProviders: Record<string, SupportedProvider> = {},
 ): ResolvedProvider => {
+  const selectedProvider = resolveProviderFromModelString(selectedModel)
+  if (selectedProvider) {
+    return { provider: selectedProvider, source: "selected_model" }
+  }
+
   const persisted = sessionProviders[sessionID]
   if (persisted) {
     return { provider: persisted, source: "selected_model" }
   }
 
-  return resolveProviderFromMessages(messages, selectedModel)
+  return resolveProviderFromMessageHistory(messages)
 }
 
 export const readOpenCodeAuthText = (text: string): OpenCodeAuthStore => {
@@ -396,6 +434,40 @@ export const resolveCopilotCredential = (
   if (entry?.type === "oauth") {
     return {
       token: entry.refresh || entry.access,
+      source: "opencode",
+    }
+  }
+
+  return { source: "missing" }
+}
+
+export const resolveZaiCredential = (
+  env: EnvInput = process.env,
+  auth: OpenCodeAuthStore = {},
+): ZaiCredential => {
+  const apiKey = asString(env.OPENBAR_ZAI_API_KEY)
+  if (apiKey) {
+    return { apiKey, source: "env" }
+  }
+
+  const entry = auth["zai-coding-plan"] ?? auth.zai ?? auth["z.ai"]
+  if (entry?.type === "api") {
+    return {
+      apiKey: entry.key,
+      source: "opencode",
+    }
+  }
+
+  if (entry?.type === "wellknown") {
+    return {
+      apiKey: entry.token,
+      source: "opencode",
+    }
+  }
+
+  if (entry?.type === "oauth") {
+    return {
+      apiKey: entry.access || entry.refresh,
       source: "opencode",
     }
   }
@@ -490,6 +562,86 @@ export const normalizeCopilotPayload = (payload: unknown): NormalizedPayload => 
       ...window,
       resetsAt: window.resetsAt ?? resetsAt,
     })),
+    message: plan ? `Plan: ${title(plan)}` : undefined,
+  }
+}
+
+const normalizeZaiWindow = (label: string, value: unknown, unit?: UsageUnit): WindowUsage | undefined => {
+  const record = toRecord(value)
+  if (!record) return
+
+  const limit = toNumber(record.usage)
+  const currentValue = toNumber(record.currentValue)
+  const remainingValue = toNumber(record.remaining)
+  const rawPercent = toNumber(record.percentage)
+  const resetsAt = parseReset(record.nextResetTime)
+
+  if (limit != null && limit > 0) {
+    const remaining = remainingValue != null ? clamp(remainingValue, 0, limit) : undefined
+    const usedFromRemaining = remaining != null ? limit - remaining : undefined
+    const usedRaw = usedFromRemaining != null && currentValue != null
+      ? Math.max(usedFromRemaining, currentValue)
+      : usedFromRemaining ?? currentValue
+
+    if (usedRaw != null) {
+      const used = clamp(usedRaw, 0, limit)
+      return {
+        label,
+        used,
+        limit,
+        remaining: clamp(limit - used, 0, limit),
+        unit,
+        resetsAt,
+      }
+    }
+  }
+
+  if (rawPercent == null && limit == null && currentValue == null && remainingValue == null && !resetsAt) {
+    return
+  }
+
+  return {
+    label,
+    usedPercent: clamp(Math.max(0, rawPercent ?? 0), 0, 100),
+    unit,
+    resetsAt,
+  }
+}
+
+export const normalizeZaiPayload = (payload: unknown): NormalizedPayload => {
+  const record = toRecord(payload)
+  const code = toNumber(record?.code)
+
+  if (record?.success === false || (code != null && code !== 200)) {
+    throw new Error(asString(record?.msg) ?? "z.ai API error")
+  }
+
+  const data = toRecord(record?.data)
+  if (!data) {
+    throw new Error(asString(record?.msg) ?? "z.ai usage response did not contain data.")
+  }
+
+  const limits = Array.isArray(data.limits) ? data.limits : []
+  let tokenWindow: WindowUsage | undefined
+  let timeWindow: WindowUsage | undefined
+
+  for (const value of limits) {
+    const limit = toRecord(value)
+    const type = asString(limit?.type)
+    if (type === "TOKENS_LIMIT" && !tokenWindow) {
+      tokenWindow = normalizeZaiWindow("TOKENS", limit, "tokens")
+      continue
+    }
+
+    if (type === "TIME_LIMIT" && !timeWindow) {
+      timeWindow = normalizeZaiWindow("MCP", limit)
+    }
+  }
+
+  const plan = asString(data.planName) ?? asString(data.plan) ?? asString(data.plan_type) ?? asString(data.packageName)
+
+  return {
+    windows: [tokenWindow, timeWindow].filter((window): window is WindowUsage => Boolean(window)),
     message: plan ? `Plan: ${title(plan)}` : undefined,
   }
 }
