@@ -1,13 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "openbar",
+  "name": "opencode-usage",
   "version": "0.1.0",
   "type": "module",
   "description": "CodexBar within opencode.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fm1randa/openbar"
+    "url": "https://github.com/fm1randa/opencode-usage"
   },
   "keywords": ["opencode", "plugin", "quota", "sidebar", "codex", "copilot", "zai"],
   "exports": {
