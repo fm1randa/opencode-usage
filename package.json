@@ -3,7 +3,13 @@
   "name": "openbar",
   "version": "0.1.0",
   "type": "module",
-  "description": "OpenCode sidebar quota widget for Codex, GitHub Copilot, and z.ai.",
+  "description": "CodexBar within opencode.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fm1randa/openbar"
+  },
+  "keywords": ["opencode", "plugin", "quota", "sidebar", "codex", "copilot", "zai"],
   "exports": {
     "./server": {
       "import": "./server.ts",

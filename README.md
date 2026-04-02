@@ -1,6 +1,8 @@
 # OpenBar
 
-Provider quota usage in the OpenCode sidebar.
+CodexBar within opencode.
+
+> "Open" for OpenCode + "Bar" from [CodexBar](https://github.com/steipete/CodexBar), its inspiration.
 
 ## Install
 
