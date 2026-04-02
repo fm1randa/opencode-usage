@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "opencode-usage",
+  "name": "oc-plugin-usage",
   "version": "0.1.0",
   "type": "module",
   "description": "CodexBar within opencode.",
@@ -9,7 +9,15 @@
     "type": "git",
     "url": "https://github.com/fm1randa/opencode-usage"
   },
-  "keywords": ["opencode", "plugin", "quota", "sidebar", "codex", "copilot", "zai"],
+  "keywords": [
+    "opencode",
+    "plugin",
+    "quota",
+    "sidebar",
+    "codex",
+    "copilot",
+    "zai"
+  ],
   "exports": {
     "./server": {
       "import": "./server.ts",

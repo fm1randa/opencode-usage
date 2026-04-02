@@ -10,7 +10,7 @@ Add to your `opencode.json`:
 
 ```json
 {
-  "plugin": ["opencode-usage"]
+  "plugin": ["oc-plugin-usage"]
 }
 ```
 
