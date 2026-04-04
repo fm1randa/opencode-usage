@@ -1,5 +1,7 @@
 # oc-plugin-usage
 
+<img width="1160" height="798" alt="oc-plugin-usage" src="https://github.com/user-attachments/assets/39e76f5d-1a85-49c8-a6db-fff59c7c74b9" />
+
 Provider quota usage in the OpenCode sidebar.
 
 ## Install
